@@ -1,24 +1,24 @@
 #
-# Copyright (c) 2023 Airbyte, Inc., all rights reserved.
+# Copyright (c) 2026 Airbyte, Inc., all rights reserved.
 #
-
 
 from typing import Any, Dict, Mapping
 
-from airbyte_cdk.sources.streams.http.requests_native_auth.oauth import Oauth2Authenticator
+from airbyte_cdk.sources.streams.http.requests_native_auth import Oauth2Authenticator
 
 from .zuora_endpoint import get_url_base
 
 
-class OAuth(Oauth2Authenticator):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+class ZuoraOauth2Authenticator(Oauth2Authenticator):
+    """
+    Zuora uses the OAuth2 `client_credentials` grant and has no refresh token,
+    so the standard `refresh_token` arg is stripped from the refresh request body.
+    """
 
-    def get_refresh_request_body(self) -> Mapping[str, Any]:
-        payload = super().get_refresh_request_body()
-        payload["grant_type"] = "client_credentials"
-        payload.pop("refresh_token")  # Zuora doesn't have Refresh Token parameter
-        return payload
+    def build_refresh_request_body(self) -> Mapping[str, Any]:
+        body = dict(super().build_refresh_request_body())
+        body.pop("refresh_token", None)
+        return body
 
 
 class ZuoraAuthenticator:
@@ -29,10 +29,11 @@ class ZuoraAuthenticator:
     def url_base(self) -> str:
         return get_url_base(self.config["tenant_endpoint"])
 
-    def get_auth(self) -> OAuth:
-        return OAuth(
+    def get_auth(self) -> ZuoraOauth2Authenticator:
+        return ZuoraOauth2Authenticator(
             token_refresh_endpoint=f"{self.url_base}/oauth/token",
             client_id=self.config["client_id"],
             client_secret=self.config["client_secret"],
-            refresh_token=None,  # Zuora doesn't have Refresh Token parameter
+            refresh_token=None,
+            grant_type="client_credentials",
         )
