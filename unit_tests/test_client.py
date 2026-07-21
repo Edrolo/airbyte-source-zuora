@@ -1,4 +1,3 @@
-import json
 import pytest
 from source_zuora.zuora_client import ZuoraQueryClient
 from source_zuora.zuora_errors import ZOQLQueryFailed, ZOQLQueryCannotProcessObject

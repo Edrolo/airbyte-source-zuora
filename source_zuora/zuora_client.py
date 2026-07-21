@@ -3,15 +3,12 @@
 #
 
 import json
-import logging
 import time
 from typing import Any, Iterator, List, Mapping, MutableMapping, Optional
 
 import requests
 
 from .zuora_errors import ZOQLQueryCannotProcessObject, ZOQLQueryFailed
-
-logger = logging.getLogger("airbyte")
 
 TYPE_NUMBER = ["number", "null"]
 TYPE_STRING = ["string", "null"]
