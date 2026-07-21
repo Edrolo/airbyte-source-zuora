@@ -68,3 +68,29 @@ def test_describe_object_maps_types(requests_mock):
     props = make_client().describe_object("account")
     assert props["id"] == {"type": ["string", "null"]}
     assert props["balance"] == {"type": ["number", "null"]}
+
+
+def test_describe_object_is_memoized(requests_mock):
+    register_job(requests_mock, ["completed"])
+    requests_mock.get(
+        "https://s3/result.jsonl",
+        text='{"Column": "id", "Type": "varchar"}\n',
+    )
+    client = make_client()
+    first = client.describe_object("account")
+    call_count_after_first = requests_mock.call_count
+    second = client.describe_object("account")
+    assert second == first
+    # no additional HTTP calls were made for the second describe
+    assert requests_mock.call_count == call_count_after_first
+
+
+def test_poll_job_times_out(requests_mock):
+    requests_mock.post(f"{BASE}/query/jobs", json={"data": {"id": "job-1"}})
+    requests_mock.get(
+        f"{BASE}/query/jobs/job-1",
+        json={"data": {"queryStatus": "in_progress", "query": "select 1"}},
+    )
+    client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, max_poll_attempts=2)
+    with pytest.raises(ZOQLQueryFailed):
+        list(client.run_query("select * from account"))

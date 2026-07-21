@@ -87,6 +87,10 @@ class ZuoraObjectStream(Stream, IncrementalMixin):
     def stream_slices(
         self, *, sync_mode=SyncMode.full_refresh, cursor_field=None, stream_state=None
     ) -> Iterable[Optional[Mapping[str, Any]]]:
+        if not self.cursor_field:
+            yield None
+            return
+
         local_tz = pendulum.local_timezone()
         start_date = pendulum.parse(self._config["start_date"]).in_timezone(local_tz)
         end_date = pendulum.now(local_tz)

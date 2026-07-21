@@ -1,4 +1,3 @@
-import pendulum
 from airbyte_cdk.models import SyncMode
 from source_zuora.source import ZuoraObjectStream, SourceZuora
 
@@ -62,6 +61,12 @@ def test_stream_slices_windows_from_start_date():
     slices = list(stream.stream_slices(sync_mode=SyncMode.incremental))
     assert slices  # at least one window
     assert set(slices[0].keys()) == {"start_date", "end_date"}
+
+
+def test_stream_slices_single_slice_when_no_cursor():
+    client = FakeClient({"name": {"type": ["string", "null"]}})  # no updateddate/createddate
+    stream = make_stream(client)
+    assert list(stream.stream_slices(sync_mode=SyncMode.full_refresh)) == [None]
 
 
 def test_read_records_advances_cursor():

@@ -61,12 +61,15 @@ class ZuoraQueryClient:
         data_query: str = "Live",
         poll_interval: float = 1.0,
         session: Optional[requests.Session] = None,
+        max_poll_attempts: int = 1800,
     ):
         self._url_base = url_base
         self._auth = authenticator
         self._data_query = data_query
         self._poll_interval = poll_interval
         self._session = session or requests.Session()
+        self._max_poll_attempts = max_poll_attempts
+        self._describe_cache: dict = {}
 
     def _headers(self) -> Mapping[str, str]:
         return {**self._auth.get_auth_header(), "Content-Type": "application/json"}
@@ -91,7 +94,13 @@ class ZuoraQueryClient:
         return resp.json()["data"]["id"]
 
     def poll_job(self, job_id: str) -> str:
+        attempts = 0
         while True:
+            attempts += 1
+            if attempts > self._max_poll_attempts:
+                raise ZOQLQueryFailed(
+                    f"Polling timed out after {self._max_poll_attempts} attempts", ""
+                )
             resp = self._session.get(
                 f"{self._url_base}/query/jobs/{job_id}", headers=self._headers()
             )
@@ -108,10 +117,10 @@ class ZuoraQueryClient:
             time.sleep(self._poll_interval)
 
     def _download(self, data_file_url: str) -> Iterator[Mapping[str, Any]]:
-        resp = self._session.get(data_file_url)
+        resp = self._session.get(data_file_url, stream=True)
         resp.raise_for_status()
-        for line in resp.text.splitlines():
-            if line.strip():
+        for line in resp.iter_lines():
+            if line:
                 yield json.loads(line)
 
     def run_query(self, zoql: str) -> Iterator[Mapping[str, Any]]:
@@ -123,7 +132,11 @@ class ZuoraQueryClient:
         return [row["Table"] for row in self.run_query("SHOW TABLES")]
 
     def describe_object(self, name: str) -> Mapping[str, Mapping[str, Any]]:
-        return {
+        if name in self._describe_cache:
+            return self._describe_cache[name]
+        result = {
             row["Column"]: {"type": TYPE_MAPPING.get(row.get("Type"), TYPE_STRING)}
             for row in self.run_query(f"DESCRIBE {name}")
         }
+        self._describe_cache[name] = result
+        return result
