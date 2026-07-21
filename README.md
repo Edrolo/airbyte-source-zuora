@@ -8,27 +8,6 @@ For information about how to use this connector within Airbyte, see [the documen
 ### Prerequisites
 **To iterate on this connector, make sure to complete this prerequisites section.**
 
-#### Minimum Python version required `= 3.7.0`
-
-#### Build & Activate Virtual Environment and install dependencies
-From this connector directory, create a virtual environment:
-```
-python3 -m venv .venv
-```
-
-This will generate a virtualenv for this module in `.venv/`. Make sure this venv is active in your
-development environment of choice. To activate it from the terminal, run:
-```
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-If you are in an IDE, follow your IDE's instructions to activate the virtualenv.
-
-Note that while we are installing dependencies from `requirements.txt`, you should only edit `setup.py` for your dependencies. `requirements.txt` is
-used for editable installs (`pip install -e`) to pull in Python dependencies from the monorepo and will call `setup.py`.
-If this is mumbo jumbo to you, don't worry about it, just put your deps in `setup.py` but install using `pip install -r requirements.txt` and everything
-should work as you expect.
-
 #### Create credentials
 **If you are a community contributor**, follow the instructions in the [documentation](https://docs.airbyte.io/integrations/sources/zuora)
 to generate the necessary credentials. Then create a file `secrets/config.json` conforming to the `source_zuora/spec.json` file.
@@ -38,12 +17,19 @@ See `integration_tests/sample_config.json` for a sample config file.
 **If you are an Airbyte core member**, copy the credentials in Lastpass under the secret name `source zuora test creds`
 and place them into `secrets/config.json`.
 
-### Locally running the connector
-```
-python main.py spec
-python main.py check --config secrets/config.json
-python main.py discover --config secrets/config.json
-python main.py read --config secrets/config.json --catalog integration_tests/configured_catalog.json
+### Local development
+
+This connector uses [Poetry](https://python-poetry.org/) and requires Python 3.10–3.13
+(airbyte-cdk does not yet support 3.14).
+
+```bash
+poetry env use python3.13
+poetry install
+poetry run source-zuora spec
+poetry run source-zuora check --config secrets/config.json
+poetry run source-zuora discover --config secrets/config.json
+poetry run source-zuora read --config secrets/config.json --catalog integration_tests/configured_catalog.json
+poetry run pytest unit_tests/
 ```
 
 ### Locally running the connector docker image
