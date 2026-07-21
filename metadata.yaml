@@ -1,0 +1,37 @@
+data:
+  allowedHosts:
+    hosts:
+      - "${tenant_endpoint}"
+      - "*.zuora.com"
+      - "*.amazonaws.com"
+  connectorSubtype: api
+  connectorType: source
+  definitionId: 3dc3037c-5ce8-4661-adc2-f7a9e3c5ece5  # real id from the Airbyte registry
+  dockerImageTag: 0.2.0  # revival bump; upstream was archived at 0.1.3
+  dockerRepository: airbyte/source-zuora
+  githubIssueLabel: source-zuora
+  icon: zuora.svg
+  license: MIT
+  name: Zuora
+  releaseStage: alpha
+  supportLevel: community
+  documentationUrl: https://docs.airbyte.com/integrations/sources/zuora
+  tags:
+    - language:python
+    - cdk:python
+  connectorBuildOptions:
+    baseImage: docker.io/airbyte/python-connector-base:2.0.0@sha256:c44839ba84406116e8ba68722a0f30e8f6e7056c726f447681bb9e9ece8bd916
+  ab_internal:
+    ql: 100
+    sl: 100
+  registryOverrides:
+    oss:
+      enabled: true
+    cloud:
+      enabled: false
+metadataSpecVersion: "1.0"
+# NOTE: `definitionId` and the `baseImage` sha must match the values in Airbyte's connector
+# registry for the real published connector. Before merging, replace `definitionId` with the
+# connector's actual UUID (from the current `metadata.yaml` in the airbyte monorepo) and pin
+# `baseImage` to the latest `python-connector-base` digest. This file is a scaffold for local
+# `airbyte-ci` use.
