@@ -75,23 +75,89 @@ poetry run pytest unit_tests/ -v
 [Connector Acceptance Tests](https://docs.airbyte.com/connector-development/testing-connectors/connector-acceptance-tests-reference)
 if you wire them up in your own CI.
 
-## Packaging & Docker
+## Building the image
 
 Dependencies are managed with Poetry (`pyproject.toml` / `poetry.lock`) — there is no `setup.py`
-and no `requirements.txt`. `metadata.yaml` declares an Airbyte base-image build
-(`connectorBuildOptions.baseImage`) rather than a hand-written `Dockerfile`; building a runnable
-image is only needed if you deploy this into an Airbyte platform, and requires Airbyte's
-connector build tooling.
+and no `requirements.txt`. The [`Dockerfile`](Dockerfile) builds a standalone connector image
+`FROM airbyte/python-connector-base:4.1.0` (Python 3.13) and installs the package so the
+container's entrypoint is the `source-zuora` command (it accepts `spec` / `check` / `discover` /
+`read`).
 
-> Before publishing an image or submitting to any registry, reconcile the scaffold values in
-> `metadata.yaml` (see its inline note) — confirm the pinned `baseImage` digest is current and
-> that `definitionId` matches your intended registry entry.
+**CI (recommended).** [`.github/workflows/build-and-publish.yml`](.github/workflows/build-and-publish.yml)
+runs the tests, then builds `linux/amd64` and pushes to GHCR at
+**`ghcr.io/edrolo/airbyte-source-zuora`**:
+
+- push to `main` → tags `main` and `sha-<short>`
+- push a version tag `vX.Y.Z` → tags `X.Y.Z`, `X.Y`, and `latest`
+- pull requests build the image to validate the `Dockerfile` but do not push
+
+Cut a release image:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+**Local build** (build for the cluster's arch — Airbyte job pods are typically `amd64`, so
+cross-build from Apple Silicon):
+
+```bash
+docker build --platform linux/amd64 -t ghcr.io/edrolo/airbyte-source-zuora:0.2.0 .
+docker run --rm ghcr.io/edrolo/airbyte-source-zuora:0.2.0 spec        # sanity check → SPEC message
+docker push ghcr.io/edrolo/airbyte-source-zuora:0.2.0
+```
+
+> **Bumping the base image:** pick the newest `python-connector-base` tag whose Python is still
+> `< 3.14`, rebuild, re-run `spec`/`check`, and re-pin the digest in both `Dockerfile` and
+> `metadata.yaml` (they must match).
+
+## Installing on a self-hosted Airbyte (Kubernetes)
+
+1. **Publish the image** to a registry your cluster can pull from (see above). GHCR packages are
+   **private by default** — either make the package public, or configure a pull secret (step 2).
+
+2. **Private-registry pull secret** (skip if the image is public). Create a secret in Airbyte's
+   namespace and point the worker at it:
+
+   ```bash
+   kubectl create secret docker-registry regcred \
+     --docker-server=ghcr.io \
+     --docker-username=<github-user> \
+     --docker-password=<ghcr-token-with-read:packages> \
+     --namespace airbyte
+   ```
+
+   In your Helm `values.yaml`, then `helm upgrade`:
+
+   ```yaml
+   worker:
+     extraEnv:
+       - name: JOB_KUBE_MAIN_CONTAINER_IMAGE_PULL_SECRET
+         value: regcred
+   ```
+
+   (The exact key path can differ between Airbyte Helm chart V1 and V2.)
+
+3. **Register the connector** in the Airbyte UI:
+   **Workspace Settings → Sources → New connector → Add a new Docker connector**, then set:
+
+   | Field | Value |
+   |---|---|
+   | Connector display name | `Zuora (Edrolo)` |
+   | Docker full image name | `ghcr.io/edrolo/airbyte-source-zuora` |
+   | Docker image tag | `0.2.0` |
+   | Connector documentation URL | *(optional)* |
+
+   Airbyte pulls the image and runs `spec` to render the config form. Create a source from it
+   using the [config fields](#configuration) above.
+
+> Bump the image **tag** on every change — Airbyte caches connector images by tag, so reusing a
+> tag can serve a stale image.
 
 ## Architecture
 
 | File | Responsibility |
 |---|---|
-| `source_zuora/source.py` | `SourceZuora(AbstractSource)` + `ZuoraObjectStream(Stream, IncrementalMixin)` — discovery, per-stream state, slicing, cursor resolution/fallback. |
+| `source_zuora/source.py` | `SourceZuora(AbstractSource)` + `ZuoraObjectStream(Stream, CheckpointMixin)` — discovery, per-stream state, slicing, cursor resolution/fallback. |
 | `source_zuora/zuora_client.py` | `ZuoraQueryClient` — ZOQL submit/poll/download, `list_objects`, `describe_object`, retries/backoff/timeouts. |
 | `source_zuora/zuora_auth.py` | OAuth2 `client_credentials` authenticator. |
 | `source_zuora/zuora_endpoint.py` | Tenant-endpoint → API base-URL mapping. |
