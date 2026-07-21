@@ -83,8 +83,9 @@ and no `requirements.txt`. `metadata.yaml` declares an Airbyte base-image build
 image is only needed if you deploy this into an Airbyte platform, and requires Airbyte's
 connector build tooling.
 
-> If you publish an image, pin the `baseImage` digest in `metadata.yaml` first (it currently
-> carries a scaffold value with an inline note).
+> Before publishing an image or submitting to any registry, reconcile the scaffold values in
+> `metadata.yaml` (see its inline note) — confirm the pinned `baseImage` digest is current and
+> that `definitionId` matches your intended registry entry.
 
 ## Architecture
 
