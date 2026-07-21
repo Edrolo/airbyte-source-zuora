@@ -8,7 +8,12 @@ from typing import Any, Iterator, List, Mapping, MutableMapping, Optional
 
 import requests
 
-from .zuora_errors import ZOQLQueryCannotProcessObject, ZOQLQueryFailed
+from .zuora_errors import (
+    ZOQLQueryCannotProcessObject,
+    ZOQLQueryFailed,
+    ZuoraConfigError,
+    ZuoraTransientError,
+)
 
 TYPE_NUMBER = ["number", "null"]
 TYPE_STRING = ["string", "null"]
@@ -46,6 +51,13 @@ TYPE_MAPPING = {
 _ERROR_STATUSES = {"failed", "canceled", "aborted"}
 _PROCESS_OBJECT_ERROR = "process object"
 
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+_RETRYABLE_EXCEPTIONS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+)
+
 
 class ZuoraQueryClient:
     """
@@ -62,6 +74,9 @@ class ZuoraQueryClient:
         poll_interval: float = 1.0,
         session: Optional[requests.Session] = None,
         max_poll_attempts: int = 1800,
+        request_timeout: tuple = (30, 300),
+        max_retries: int = 5,
+        backoff_factor: float = 1.0,
     ):
         self._url_base = url_base
         self._auth = authenticator
@@ -69,6 +84,9 @@ class ZuoraQueryClient:
         self._poll_interval = poll_interval
         self._session = session or requests.Session()
         self._max_poll_attempts = max_poll_attempts
+        self._request_timeout = request_timeout
+        self._max_retries = max_retries
+        self._backoff_factor = backoff_factor
         self._describe_cache: dict = {}
 
     def _headers(self) -> Mapping[str, str]:
@@ -84,14 +102,54 @@ class ZuoraQueryClient:
             params["sourceData"] = "DATAHUB"
         return params
 
+    def _sleep_before_retry(self, attempt: int, response: Optional[requests.Response]) -> None:
+        delay = self._backoff_factor * (2**attempt)
+        if response is not None:
+            retry_after = response.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    delay = float(retry_after)
+                except ValueError:
+                    pass
+        if delay > 0:
+            time.sleep(delay)
+
+    def _request(self, method: str, url: str, **kwargs) -> requests.Response:
+        kwargs.setdefault("timeout", self._request_timeout)
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = self._session.request(method, url, **kwargs)
+            except _RETRYABLE_EXCEPTIONS as exc:
+                if attempt >= self._max_retries:
+                    raise ZuoraTransientError(
+                        f"Request {method} {url} failed after {self._max_retries} retries: {exc}"
+                    )
+                self._sleep_before_retry(attempt, None)
+                continue
+            if response.status_code in _RETRYABLE_STATUS:
+                if attempt >= self._max_retries:
+                    raise ZuoraTransientError(
+                        f"Request {method} {url} failed with HTTP {response.status_code} "
+                        f"after {self._max_retries} retries"
+                    )
+                self._sleep_before_retry(attempt, response)
+                continue
+            if response.status_code in (401, 403):
+                raise ZuoraConfigError(
+                    f"Zuora returned HTTP {response.status_code} for {url} — "
+                    f"check your client credentials and API user permissions."
+                )
+            response.raise_for_status()
+            return response
+        raise ZuoraTransientError(f"Request {method} {url} exhausted retries")  # defensive
+
     def submit_job(self, zoql: str) -> str:
         params = self._base_params()
         params["query"] = zoql
-        resp = self._session.post(
-            f"{self._url_base}/query/jobs", headers=self._headers(), json=params
+        response = self._request(
+            "POST", f"{self._url_base}/query/jobs", headers=self._headers(), json=params
         )
-        resp.raise_for_status()
-        return resp.json()["data"]["id"]
+        return response.json()["data"]["id"]
 
     def poll_job(self, job_id: str) -> str:
         attempts = 0
@@ -101,11 +159,10 @@ class ZuoraQueryClient:
                 raise ZOQLQueryFailed(
                     f"Polling timed out after {self._max_poll_attempts} attempts", ""
                 )
-            resp = self._session.get(
-                f"{self._url_base}/query/jobs/{job_id}", headers=self._headers()
+            response = self._request(
+                "GET", f"{self._url_base}/query/jobs/{job_id}", headers=self._headers()
             )
-            resp.raise_for_status()
-            data = resp.json()["data"]
+            data = response.json()["data"]
             status = data["queryStatus"]
             if status == "completed":
                 return data["dataFile"]
@@ -117,9 +174,8 @@ class ZuoraQueryClient:
             time.sleep(self._poll_interval)
 
     def _download(self, data_file_url: str) -> Iterator[Mapping[str, Any]]:
-        resp = self._session.get(data_file_url, stream=True)
-        resp.raise_for_status()
-        for line in resp.iter_lines():
+        response = self._request("GET", data_file_url, stream=True)
+        for line in response.iter_lines():
             if line:
                 yield json.loads(line)
 

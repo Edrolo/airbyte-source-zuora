@@ -94,3 +94,34 @@ def test_poll_job_times_out(requests_mock):
     client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, max_poll_attempts=2)
     with pytest.raises(ZOQLQueryFailed):
         list(client.run_query("select * from account"))
+
+
+def test_request_retries_transient_5xx_then_succeeds(requests_mock):
+    from source_zuora.zuora_client import ZuoraQueryClient
+    # submit returns 503 once, then 200
+    requests_mock.post(
+        f"{BASE}/query/jobs",
+        [{"status_code": 503}, {"json": {"data": {"id": "job-1"}}, "status_code": 200}],
+    )
+    requests_mock.get(f"{BASE}/query/jobs/job-1", json={"data": {"queryStatus": "completed", "dataFile": "https://s3/r.jsonl"}})
+    requests_mock.get("https://s3/r.jsonl", text='{"id": "a"}\n')
+    client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, backoff_factor=0)
+    assert list(client.run_query("select 1")) == [{"id": "a"}]
+
+
+def test_request_raises_transient_after_exhaustion(requests_mock):
+    from source_zuora.zuora_client import ZuoraQueryClient
+    from source_zuora.zuora_errors import ZuoraTransientError
+    requests_mock.post(f"{BASE}/query/jobs", status_code=503)
+    client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, backoff_factor=0, max_retries=2)
+    with pytest.raises(ZuoraTransientError):
+        list(client.run_query("select 1"))
+
+
+def test_request_maps_401_to_config_error(requests_mock):
+    from source_zuora.zuora_client import ZuoraQueryClient
+    from source_zuora.zuora_errors import ZuoraConfigError
+    requests_mock.post(f"{BASE}/query/jobs", status_code=401)
+    client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, backoff_factor=0)
+    with pytest.raises(ZuoraConfigError):
+        list(client.run_query("select 1"))
