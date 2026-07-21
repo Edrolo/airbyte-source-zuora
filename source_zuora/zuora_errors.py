@@ -23,16 +23,19 @@ class QueryWindowError(AirbyteTracedException):
         )
 
 
-class ZOQLQueryFailed(Exception):
-    """A ZOQL Data Query job terminated in a non-completed state."""
+class ZOQLQueryFailed(AirbyteTracedException):
+    """A ZOQL Data Query job terminated in a non-completed (server-side) state."""
 
     def __init__(self, message: str, query: str = ""):
-        self.message = message
         self.query = query
-        super().__init__(f"{message}, QUERY: {query}")
+        super().__init__(
+            message=message,
+            internal_message=f"{message} | QUERY: {query}",
+            failure_type=FailureType.system_error,
+        )
 
 
-class ZOQLQueryCannotProcessObject(Exception):
+class ZOQLQueryCannotProcessObject(AirbyteTracedException):
     """
     A Zuora object cannot be read (permissions / subscription plan / API user
     permissions). Non-critical: the stream is skipped and the sync continues.
@@ -46,5 +49,24 @@ class ZOQLQueryCannotProcessObject(Exception):
             "and can be ignored."
         ),
     ):
-        self.message = message
-        super().__init__(message)
+        super().__init__(
+            message=message, internal_message=message, failure_type=FailureType.config_error
+        )
+
+
+class ZuoraTransientError(AirbyteTracedException):
+    """A Zuora HTTP request failed with a retryable error after retries were exhausted."""
+
+    def __init__(self, message: str):
+        super().__init__(
+            message=message, internal_message=message, failure_type=FailureType.transient_error
+        )
+
+
+class ZuoraConfigError(AirbyteTracedException):
+    """A Zuora request failed for an actionable, user-side reason (bad credentials / access)."""
+
+    def __init__(self, message: str):
+        super().__init__(
+            message=message, internal_message=message, failure_type=FailureType.config_error
+        )

@@ -138,8 +138,8 @@ class ZuoraObjectStream(Stream, IncrementalMixin):
                     if incoming:
                         self._cursor_value = max(self._cursor_value or "", incoming)
                 yield record
-        except ZOQLQueryCannotProcessObject:
-            # non-critical: skip this stream
+        except ZOQLQueryCannotProcessObject as error:
+            logger.warning("Skipping stream '%s': %s", self.name, error.message)
             return
         except ZOQLQueryFailed as error:
             if "cannot be resolved" not in (error.message or ""):
