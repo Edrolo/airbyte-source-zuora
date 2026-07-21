@@ -102,8 +102,6 @@ connector build tooling.
 
 - **Python 3.14 is not supported** until airbyte-cdk supports it.
 - `check` / `discover` / `read` cannot be verified without a live Zuora tenant.
-- `ZuoraObjectStream` uses the CDK's `IncrementalMixin`, which is deprecated in favor of
-  `CheckpointMixin` — a candidate follow-up before a future CDK bump.
 - Minor deferred items: date-window boundaries overlap by one edge (deduplicated by primary key);
   the `requests.Session` is not explicitly closed; `TYPE_MAPPING` assumes lowercase,
   unparameterized Zuora column types.
