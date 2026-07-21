@@ -10,7 +10,7 @@ from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, Tuple
 import pendulum
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources import AbstractSource
-from airbyte_cdk.sources.streams import IncrementalMixin, Stream
+from airbyte_cdk.sources.streams import CheckpointMixin, Stream
 from airbyte_cdk.utils import AirbyteTracedException
 
 from .zuora_auth import ZuoraAuthenticator
@@ -28,10 +28,14 @@ CURSOR_FIELD = "updateddate"
 ALT_CURSOR_FIELD = "createddate"
 
 
-class ZuoraObjectStream(Stream, IncrementalMixin):
+class ZuoraObjectStream(Stream, CheckpointMixin):
     """
     One dynamically-discovered Zuora object. Emits per-stream incremental state
     keyed on the resolved cursor field.
+
+    Uses ``CheckpointMixin`` (the ``state`` getter/setter contract) rather than the
+    deprecated ``IncrementalMixin``; whether the stream syncs incrementally is decided
+    by the CDK from ``cursor_field`` (empty list -> full-refresh only), not the mixin.
     """
 
     primary_key = "id"

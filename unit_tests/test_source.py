@@ -1,5 +1,12 @@
 from airbyte_cdk.models import SyncMode
+from airbyte_cdk.sources.streams import CheckpointMixin, IncrementalMixin
 from source_zuora.source import ZuoraObjectStream, SourceZuora
+
+
+def test_stream_uses_checkpointmixin_not_deprecated_incrementalmixin():
+    # State/checkpointing must come from CheckpointMixin; IncrementalMixin is deprecated.
+    assert issubclass(ZuoraObjectStream, CheckpointMixin)
+    assert not issubclass(ZuoraObjectStream, IncrementalMixin)
 
 
 CONFIG = {
