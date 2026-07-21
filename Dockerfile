@@ -7,7 +7,7 @@
 # Build (for a typical amd64 cluster, e.g. from an Apple-Silicon dev machine):
 #   docker build --platform linux/amd64 -t <registry>/source-zuora:0.2.0 .
 #
-FROM docker.io/airbyte/python-connector-base:2.0.0
+FROM docker.io/airbyte/python-connector-base:4.1.0@sha256:1d1aa21d34e851df4e8a87b391c27724c06e2597608e7161f4d167be853bd7b6
 
 # Install the connector package (registers the `source-zuora` console script via
 # pyproject.toml [tool.poetry.scripts]). pip resolves deps from pyproject at build time.

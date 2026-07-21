@@ -20,7 +20,7 @@ data:
     - language:python
     - cdk:python
   connectorBuildOptions:
-    baseImage: docker.io/airbyte/python-connector-base:2.0.0@sha256:c44839ba84406116e8ba68722a0f30e8f6e7056c726f447681bb9e9ece8bd916
+    baseImage: docker.io/airbyte/python-connector-base:4.1.0@sha256:1d1aa21d34e851df4e8a87b391c27724c06e2597608e7161f4d167be853bd7b6
   ab_internal:
     ql: 100
     sl: 100
@@ -30,8 +30,7 @@ data:
     cloud:
       enabled: false
 metadataSpecVersion: "1.0"
-# NOTE: `definitionId` and the `baseImage` sha must match the values in Airbyte's connector
-# registry for the real published connector. Before merging, replace `definitionId` with the
-# connector's actual UUID (from the current `metadata.yaml` in the airbyte monorepo) and pin
-# `baseImage` to the latest `python-connector-base` digest. This file is a scaffold for local
-# `airbyte-ci` use.
+# NOTE: `baseImage` is pinned to python-connector-base 4.1.0 (Python 3.13). `definitionId` is
+# the id from Airbyte's registry for the original (archived) connector. This metadata is only
+# consumed by Airbyte's `airbyte-ci` tooling; the standalone Dockerfile is the build path for
+# self-hosted deployment and pins the same base image.
