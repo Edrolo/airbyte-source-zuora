@@ -121,3 +121,46 @@ def test_check_connection_invalid_tenant_returns_false():
         logger=None, config={**CONFIG, "tenant_endpoint": "Nonexistent"}
     )
     assert ok is False
+
+
+def test_check_connection_success(monkeypatch):
+    import source_zuora.source as src
+
+    class OkClient:
+        def __init__(self, *a, **k):
+            pass
+        def list_objects(self):
+            return ["account", "invoice"]
+
+    monkeypatch.setattr(src, "ZuoraQueryClient", OkClient)
+    ok, msg = SourceZuora().check_connection(logger=None, config=CONFIG)
+    assert ok is True and msg is None
+
+
+def test_check_connection_empty_objects_fails(monkeypatch):
+    import source_zuora.source as src
+
+    class EmptyClient:
+        def __init__(self, *a, **k):
+            pass
+        def list_objects(self):
+            return []
+
+    monkeypatch.setattr(src, "ZuoraQueryClient", EmptyClient)
+    ok, msg = SourceZuora().check_connection(logger=None, config=CONFIG)
+    assert ok is False and "no queryable objects" in msg.lower()
+
+
+def test_check_connection_traced_exception_returns_message(monkeypatch):
+    import source_zuora.source as src
+    from source_zuora.zuora_errors import ZuoraConfigError
+
+    class BadClient:
+        def __init__(self, *a, **k):
+            pass
+        def list_objects(self):
+            raise ZuoraConfigError("bad credentials")
+
+    monkeypatch.setattr(src, "ZuoraQueryClient", BadClient)
+    ok, msg = SourceZuora().check_connection(logger=None, config=CONFIG)
+    assert ok is False and msg == "bad credentials"

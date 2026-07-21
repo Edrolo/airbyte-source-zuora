@@ -11,6 +11,7 @@ import pendulum
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources import AbstractSource
 from airbyte_cdk.sources.streams import IncrementalMixin, Stream
+from airbyte_cdk.utils import AirbyteTracedException
 
 from .zuora_auth import ZuoraAuthenticator
 from .zuora_client import ZuoraQueryClient
@@ -152,14 +153,29 @@ class SourceZuora(AbstractSource):
     def check_connection(
         self, logger: logging.Logger, config: Mapping[str, Any]
     ) -> Tuple[bool, Optional[Any]]:
+        auth = ZuoraAuthenticator(config)
+        if not auth.url_base:
+            return False, (
+                f"Unknown tenant_endpoint {config.get('tenant_endpoint')!r}. "
+                f"Choose a valid endpoint from the connector spec."
+            )
         try:
-            auth = ZuoraAuthenticator(config)
-            if not auth.url_base:
-                return False, f"Unknown tenant_endpoint: {config.get('tenant_endpoint')!r}"
-            auth.get_auth().get_auth_header()
-            return True, None
+            client = ZuoraQueryClient(
+                url_base=auth.url_base,
+                authenticator=auth.get_auth(),
+                data_query=config.get("data_query", "Live"),
+            )
+            objects = client.list_objects()
+        except AirbyteTracedException as error:
+            return False, error.message
         except Exception as error:
-            return False, str(error)
+            return False, f"Unable to connect to Zuora: {error}"
+        if not objects:
+            return False, (
+                "Connected to Zuora but no queryable objects were returned. Confirm the "
+                "Data Query feature is enabled and the API user has query permissions."
+            )
+        return True, None
 
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
         auth = ZuoraAuthenticator(config)
