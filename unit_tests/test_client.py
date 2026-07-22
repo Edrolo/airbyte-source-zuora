@@ -203,3 +203,37 @@ def test_run_query_non_transient_job_failure_is_not_retried(requests_mock):
     with pytest.raises(ZOQLQueryFailed):
         list(client.run_query("bad"))
     assert post.call_count == 1  # a genuine query error must not be retried
+
+
+def test_warm_describe_cache_populates_cache(requests_mock):
+    # Serial (describe_concurrency=1) to keep requests-mock deterministic; the concurrent
+    # path is the same code with a ThreadPoolExecutor.
+    requests_mock.post(f"{BASE}/query/jobs", json={"data": {"id": "job-1"}})
+    requests_mock.get(
+        f"{BASE}/query/jobs/job-1",
+        json={"data": {"queryStatus": "completed", "dataFile": "https://s3/d.jsonl"}},
+    )
+    requests_mock.get("https://s3/d.jsonl", text='{"Column": "id", "Type": "varchar"}\n')
+    client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, backoff_factor=0, describe_concurrency=1)
+
+    client.warm_describe_cache(["account", "invoice"])
+
+    assert "account" in client._describe_cache
+    assert "invoice" in client._describe_cache
+    assert client._describe_cache["account"]["id"] == {"type": ["string", "null"]}
+
+
+def test_warm_describe_cache_concurrent_covers_all_names(monkeypatch):
+    # Exercise the ThreadPoolExecutor branch (concurrency > 1) without real HTTP.
+    client = ZuoraQueryClient(BASE, FakeAuth(), describe_concurrency=4)
+    names = ["a", "b", "c", "d", "e", "f", "g"]
+
+    def fake_describe(name):
+        result = {"id": {"type": ["string", "null"]}}
+        client._describe_cache[name] = result  # list/dict ops are GIL-atomic
+        return result
+
+    monkeypatch.setattr(client, "describe_object", fake_describe)
+    client.warm_describe_cache(names)
+
+    assert all(name in client._describe_cache for name in names)

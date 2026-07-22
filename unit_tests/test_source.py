@@ -201,3 +201,31 @@ def test_streams_filters_out_excluded_objects(monkeypatch):
     names = {stream.name for stream in SourceZuora().streams(CONFIG)}
     assert names == {"account", "invoice"}
     assert names.isdisjoint(set(ZUORA_EXCLUDED_STREAMS))
+
+
+def test_discover_prewarms_schemas_and_excludes(monkeypatch):
+    import source_zuora.source as src
+
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            captured["client"] = self
+            self.warmed = None
+
+        def list_objects(self):
+            return ["account", "invoice", "archived_usage"]
+
+        def warm_describe_cache(self, names):
+            self.warmed = list(names)
+
+        def describe_object(self, name):
+            return {"id": {"type": ["string", "null"]}, "updateddate": {"type": ["string", "null"]}}
+
+    monkeypatch.setattr(src, "ZuoraQueryClient", FakeClient)
+    catalog = SourceZuora().discover(logger=None, config=CONFIG)
+
+    names = sorted(s.name for s in catalog.streams)
+    assert names == ["account", "invoice"]                    # archived_usage excluded
+    assert captured["client"].warmed == ["account", "invoice"]  # pre-warmed, excluded filtered
+    assert catalog.streams[0].json_schema["properties"]         # schema resolved into the catalog

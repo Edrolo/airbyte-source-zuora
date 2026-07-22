@@ -4,6 +4,7 @@
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Iterator, List, Mapping, MutableMapping, Optional
 
 import requests
@@ -93,6 +94,7 @@ class ZuoraQueryClient:
         max_retries: int = 5,
         max_job_retries: int = 3,
         backoff_factor: float = 1.0,
+        describe_concurrency: int = 10,
     ):
         self._url_base = url_base
         self._auth = authenticator
@@ -104,6 +106,7 @@ class ZuoraQueryClient:
         self._max_retries = max_retries
         self._max_job_retries = max_job_retries
         self._backoff_factor = backoff_factor
+        self._describe_concurrency = describe_concurrency
         self._describe_cache: dict = {}
 
     def _headers(self) -> Mapping[str, str]:
@@ -226,3 +229,30 @@ class ZuoraQueryClient:
         }
         self._describe_cache[name] = result
         return result
+
+    def warm_describe_cache(self, names: List[str]) -> None:
+        """
+        Pre-populate the describe cache for many objects concurrently.
+
+        Each object's schema needs a separate ZOQL DESCRIBE job (submit -> poll ->
+        download). Fetching them one at a time makes discovery of a large tenant
+        exceed Airbyte's discover timeout, so pre-fetch them with a bounded thread
+        pool (bounded to respect Zuora's Data Query concurrency limits). The first
+        failure is re-raised, matching the sequential behavior.
+        """
+        pending = [name for name in names if name not in self._describe_cache]
+        if not pending:
+            return
+        if self._describe_concurrency <= 1 or len(pending) == 1:
+            for name in pending:
+                self.describe_object(name)
+            return
+        pool = ThreadPoolExecutor(max_workers=self._describe_concurrency)
+        try:
+            futures = [pool.submit(self.describe_object, name) for name in pending]
+            for future in futures:
+                future.result()  # re-raise the first failure, if any
+        finally:
+            # cancel_futures: on a failure, drop not-yet-started DESCRIBEs instead of
+            # running all of them before the error surfaces (fail fast).
+            pool.shutdown(wait=True, cancel_futures=True)

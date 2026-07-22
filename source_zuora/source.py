@@ -8,7 +8,7 @@ from functools import cached_property
 from typing import Any, Iterable, List, Mapping, MutableMapping, Optional, Tuple
 
 import pendulum
-from airbyte_cdk.models import SyncMode
+from airbyte_cdk.models import AirbyteCatalog, SyncMode
 from airbyte_cdk.sources import AbstractSource
 from airbyte_cdk.sources.streams import CheckpointMixin, Stream
 from airbyte_cdk.utils import AirbyteTracedException
@@ -180,6 +180,15 @@ class SourceZuora(AbstractSource):
                 "Data Query feature is enabled and the API user has query permissions."
             )
         return True, None
+
+    def discover(self, logger: logging.Logger, config: Mapping[str, Any]) -> AirbyteCatalog:
+        # Pre-fetch every stream's schema concurrently so the per-stream
+        # get_json_schema() calls below hit the client cache. One sequential DESCRIBE
+        # job per object otherwise blows past Airbyte's discover timeout on large tenants.
+        streams = self.streams(config)
+        if streams:
+            streams[0]._client.warm_describe_cache([stream.name for stream in streams])
+        return AirbyteCatalog(streams=[stream.as_airbyte_stream() for stream in streams])
 
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
         auth = ZuoraAuthenticator(config)
