@@ -51,6 +51,21 @@ TYPE_MAPPING = {
 _ERROR_STATUSES = {"failed", "canceled", "aborted"}
 _PROCESS_OBJECT_ERROR = "process object"
 
+# Substrings in a terminal job errorMessage that indicate a transient Zuora-side
+# outage (the whole job should be retried) rather than a permanent query/config error.
+# e.g. "Internal message: Service Temporarily Unavailable ... LINK_30000007".
+_TRANSIENT_JOB_MARKERS = (
+    "temporarily unavailable",
+    "service unavailable",
+    "try again",
+    "internal server error",
+)
+
+
+def _is_transient_job_error(message: str) -> bool:
+    lowered = message.lower()
+    return any(marker in lowered for marker in _TRANSIENT_JOB_MARKERS)
+
 _RETRYABLE_STATUS = {429, 500, 502, 503, 504}
 _RETRYABLE_EXCEPTIONS = (
     requests.exceptions.ConnectionError,
@@ -76,6 +91,7 @@ class ZuoraQueryClient:
         max_poll_attempts: int = 1800,
         request_timeout: tuple = (30, 300),
         max_retries: int = 5,
+        max_job_retries: int = 3,
         backoff_factor: float = 1.0,
     ):
         self._url_base = url_base
@@ -86,6 +102,7 @@ class ZuoraQueryClient:
         self._max_poll_attempts = max_poll_attempts
         self._request_timeout = request_timeout
         self._max_retries = max_retries
+        self._max_job_retries = max_job_retries
         self._backoff_factor = backoff_factor
         self._describe_cache: dict = {}
 
@@ -170,6 +187,8 @@ class ZuoraQueryClient:
                 message = data.get("errorMessage", "") or ""
                 if _PROCESS_OBJECT_ERROR in message:
                     raise ZOQLQueryCannotProcessObject(message)
+                if _is_transient_job_error(message):
+                    raise ZuoraTransientError(f"Zuora Data Query job failed transiently: {message}")
                 raise ZOQLQueryFailed(message, data.get("query", ""))
             time.sleep(self._poll_interval)
 
@@ -180,9 +199,20 @@ class ZuoraQueryClient:
                 yield json.loads(line)
 
     def run_query(self, zoql: str) -> Iterator[Mapping[str, Any]]:
-        job_id = self.submit_job(zoql)
-        data_file_url = self.poll_job(job_id)
-        yield from self._download(data_file_url)
+        # Retry the whole submit -> poll cycle on transient failures (HTTP transport
+        # exhaustion or a transient job outage). Only the pre-download phase is retried,
+        # so no partially-yielded records are ever duplicated.
+        for attempt in range(self._max_job_retries + 1):
+            try:
+                job_id = self.submit_job(zoql)
+                data_file_url = self.poll_job(job_id)
+            except ZuoraTransientError:
+                if attempt >= self._max_job_retries:
+                    raise
+                self._sleep_before_retry(attempt, None)
+                continue
+            yield from self._download(data_file_url)
+            return
 
     def list_objects(self) -> List[str]:
         return [row["Table"] for row in self.run_query("SHOW TABLES")]

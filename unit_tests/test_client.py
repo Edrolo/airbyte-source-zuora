@@ -153,3 +153,53 @@ def test_request_raises_transient_on_persistent_connection_error(requests_mock):
     client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, backoff_factor=0, max_retries=2)
     with pytest.raises(ZuoraTransientError):
         list(client.run_query("select 1"))
+
+
+# The Zuora job itself (HTTP 200) can terminate in a transient outage, e.g.
+# "Service Temporarily Unavailable ... LINK_30000007". These must be retried at the
+# job level (submit a fresh job), not treated as a permanent query failure.
+TRANSIENT_JOB_MSG = (
+    "Internal message: Service Temporarily Unavailable. Please contact Zuora "
+    "support team with the following error code: LINK_30000007"
+)
+
+
+def test_run_query_retries_transient_job_failure_then_succeeds(requests_mock):
+    requests_mock.post(f"{BASE}/query/jobs", json={"data": {"id": "job-1"}})
+    requests_mock.get(
+        f"{BASE}/query/jobs/job-1",
+        [
+            {"json": {"data": {"queryStatus": "failed", "query": "DESCRIBE x", "errorMessage": TRANSIENT_JOB_MSG}}},
+            {"json": {"data": {"queryStatus": "completed", "dataFile": "https://s3/r.jsonl"}}},
+        ],
+    )
+    requests_mock.get("https://s3/r.jsonl", text='{"id": "a"}\n')
+    client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, backoff_factor=0, max_job_retries=2)
+    assert list(client.run_query("DESCRIBE x")) == [{"id": "a"}]
+
+
+def test_run_query_raises_transient_after_job_retries_exhausted(requests_mock):
+    from source_zuora.zuora_errors import ZuoraTransientError
+
+    requests_mock.post(f"{BASE}/query/jobs", json={"data": {"id": "job-1"}})
+    requests_mock.get(
+        f"{BASE}/query/jobs/job-1",
+        json={"data": {"queryStatus": "failed", "query": "DESCRIBE x", "errorMessage": TRANSIENT_JOB_MSG}},
+    )
+    client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, backoff_factor=0, max_job_retries=2)
+    with pytest.raises(ZuoraTransientError):
+        list(client.run_query("DESCRIBE x"))
+
+
+def test_run_query_non_transient_job_failure_is_not_retried(requests_mock):
+    from source_zuora.zuora_errors import ZOQLQueryFailed
+
+    post = requests_mock.post(f"{BASE}/query/jobs", json={"data": {"id": "job-1"}})
+    requests_mock.get(
+        f"{BASE}/query/jobs/job-1",
+        json={"data": {"queryStatus": "failed", "query": "bad", "errorMessage": "syntax error near FROM"}},
+    )
+    client = ZuoraQueryClient(BASE, FakeAuth(), poll_interval=0, backoff_factor=0, max_job_retries=3)
+    with pytest.raises(ZOQLQueryFailed):
+        list(client.run_query("bad"))
+    assert post.call_count == 1  # a genuine query error must not be retried
