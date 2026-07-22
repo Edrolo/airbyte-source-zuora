@@ -7,7 +7,7 @@ data:
   connectorSubtype: api
   connectorType: source
   definitionId: 3dc3037c-5ce8-4661-adc2-f7a9e3c5ece5  # real id from the Airbyte registry
-  dockerImageTag: 0.2.0  # revival bump; upstream was archived at 0.1.3
+  dockerImageTag: 0.2.1
   dockerRepository: airbyte/source-zuora
   githubIssueLabel: source-zuora
   icon: zuora.svg

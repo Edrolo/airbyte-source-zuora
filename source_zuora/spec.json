@@ -39,7 +39,9 @@
           "US Performance Test",
           "EU Production",
           "EU API Sandbox",
-          "EU Central Sandbox"
+          "EU Central Sandbox",
+          "APAC Production",
+          "APAC Central Sandbox"
         ]
       },
       "data_query": {

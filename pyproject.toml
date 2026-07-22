@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "airbyte-source-zuora"
-version = "0.2.0"
+version = "0.2.1"
 description = "Airbyte source connector for Zuora."
 authors = ["Airbyte <contact@airbyte.io>"]
 license = "MIT"
