@@ -171,3 +171,33 @@ def test_check_connection_traced_exception_returns_message(monkeypatch):
     monkeypatch.setattr(src, "ZuoraQueryClient", BadClient)
     ok, msg = SourceZuora().check_connection(logger=None, config=CONFIG)
     assert ok is False and msg == "bad credentials"
+
+
+def test_excluded_streams_contains_archived_family():
+    from source_zuora.zuora_excluded_streams import ZUORA_EXCLUDED_STREAMS
+
+    for name in (
+        "archived_guidedusage",
+        "archived_prepaidbalancetransaction",
+        "archived_processedusage",
+        "archived_usage",
+    ):
+        assert name in ZUORA_EXCLUDED_STREAMS
+
+
+def test_streams_filters_out_excluded_objects(monkeypatch):
+    import source_zuora.source as src
+    from source_zuora.zuora_excluded_streams import ZUORA_EXCLUDED_STREAMS
+
+    discovered = ["account", "invoice", "archived_usage", "archived_guidedusage", "aggregatedataqueryslowdata"]
+
+    class FakeClient:
+        def __init__(self, *a, **k):
+            pass
+        def list_objects(self):
+            return discovered
+
+    monkeypatch.setattr(src, "ZuoraQueryClient", FakeClient)
+    names = {stream.name for stream in SourceZuora().streams(CONFIG)}
+    assert names == {"account", "invoice"}
+    assert names.isdisjoint(set(ZUORA_EXCLUDED_STREAMS))
