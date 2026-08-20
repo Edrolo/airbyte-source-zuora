@@ -13,27 +13,13 @@ from .zuora_errors import (
     ZOQLQueryCannotProcessObject,
     ZOQLQueryFailed,
     ZuoraTransientError,
+    is_transient_job_error,
 )
 from .zuora_http import ZuoraHttpClient
 from .zuora_types import json_type
 
 _ERROR_STATUSES = {"failed", "canceled", "aborted"}
 _PROCESS_OBJECT_ERROR = "process object"
-
-# Substrings in a terminal job errorMessage that indicate a transient Zuora-side
-# outage (the whole job should be retried) rather than a permanent query/config error.
-# e.g. "Internal message: Service Temporarily Unavailable ... LINK_30000007".
-_TRANSIENT_JOB_MARKERS = (
-    "temporarily unavailable",
-    "service unavailable",
-    "try again",
-    "internal server error",
-)
-
-
-def _is_transient_job_error(message: str) -> bool:
-    lowered = message.lower()
-    return any(marker in lowered for marker in _TRANSIENT_JOB_MARKERS)
 
 class ZuoraQueryClient:
     """
@@ -119,7 +105,7 @@ class ZuoraQueryClient:
                 message = data.get("errorMessage", "") or ""
                 if _PROCESS_OBJECT_ERROR in message:
                     raise ZOQLQueryCannotProcessObject(message)
-                if _is_transient_job_error(message):
+                if is_transient_job_error(message):
                     raise ZuoraTransientError(f"Zuora Data Query job failed transiently: {message}")
                 raise ZOQLQueryFailed(message, data.get("query", ""))
             time.sleep(self._poll_interval)
