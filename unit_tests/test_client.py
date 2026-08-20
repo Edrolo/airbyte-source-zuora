@@ -237,3 +237,32 @@ def test_warm_describe_cache_concurrent_covers_all_names(monkeypatch):
     client.warm_describe_cache(names)
 
     assert all(name in client._describe_cache for name in names)
+
+
+import pendulum
+
+
+def test_render_query_full_refresh():
+    assert make_client().render_query("account") == "select * from account"
+
+
+def test_render_query_incremental_uses_timestamp_literals():
+    start = pendulum.datetime(2026, 8, 1, tz="UTC")
+    end = pendulum.datetime(2026, 8, 20, tz="UTC")
+    query = make_client().render_query("account", cursor="updateddate", start=start, end=end)
+    assert query == (
+        "select * from account where "
+        "updateddate >= TIMESTAMP '2026-08-01 00:00:00.000000 UTC' and "
+        "updateddate <= TIMESTAMP '2026-08-20 00:00:00.000000 UTC' "
+        "order by updateddate asc"
+    )
+
+
+def test_render_query_ignores_cursor_without_bounds():
+    assert make_client().render_query("account", cursor="updateddate") == "select * from account"
+
+
+def test_read_object_full_refresh(requests_mock):
+    register_job(requests_mock, ["completed"])
+    requests_mock.get("https://s3/result.jsonl", text='{"id": "a"}\n')
+    assert list(make_client().read_object("account")) == [{"id": "a"}]

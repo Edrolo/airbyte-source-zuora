@@ -5,6 +5,7 @@
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from typing import Any, Iterator, List, Mapping, MutableMapping, Optional
 
 import requests
@@ -15,13 +16,14 @@ from .zuora_errors import (
     ZuoraTransientError,
     is_transient_job_error,
 )
+from .zuora_backend import QueryBackend
 from .zuora_http import ZuoraHttpClient
 from .zuora_types import json_type
 
 _ERROR_STATUSES = {"failed", "canceled", "aborted"}
 _PROCESS_OBJECT_ERROR = "process object"
 
-class ZuoraQueryClient:
+class ZuoraQueryClient(QueryBackend):
     """
     Runs ZOQL Data Query jobs against the Zuora REST API using the
     submit -> poll -> download (JSONL) workflow. Owns all HTTP; the CDK
@@ -131,6 +133,37 @@ class ZuoraQueryClient:
                 continue
             yield from self._download(data_file_url)
             return
+
+    @staticmethod
+    def _to_datetime_str(date: datetime) -> str:
+        # e.g. '2021-07-15 07:45:55.000000 -07:00' — format Zuora Data Query accepts
+        # as a TIMESTAMP literal.
+        return date.strftime("%Y-%m-%d %H:%M:%S.%f %Z")
+
+    def render_query(
+        self,
+        name: str,
+        cursor: Optional[str] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> str:
+        if not (cursor and start and end):
+            return f"select * from {name}"
+        return (
+            f"select * from {name} where "
+            f"{cursor} >= TIMESTAMP '{self._to_datetime_str(start)}' and "
+            f"{cursor} <= TIMESTAMP '{self._to_datetime_str(end)}' "
+            f"order by {cursor} asc"
+        )
+
+    def read_object(
+        self,
+        name: str,
+        cursor: Optional[str] = None,
+        start: Optional[datetime] = None,
+        end: Optional[datetime] = None,
+    ) -> Iterator[Mapping[str, Any]]:
+        yield from self.run_query(self.render_query(name, cursor, start, end))
 
     def list_objects(self) -> List[str]:
         return [row["Table"] for row in self.run_query("SHOW TABLES")]
