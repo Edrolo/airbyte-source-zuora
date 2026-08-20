@@ -202,6 +202,45 @@ An unknown relationship name is a submit-time error
 (`"The requested data source could not be found"`), so relationship names
 must come from the describe XML and never be guessed.
 
+### F12 — Fractional seconds on the upper bound silently match zero rows
+
+Found during implementation, not design. F3 covered the literal's *shape*; its
+*precision* matters too, and fails in the opposite direction:
+
+| Predicate | Rows (of 3308) |
+|---|---|
+| `>= '2026-04-22T17:01:07.160968+10:00'` (lower bound only) | 3308 |
+| `<= '2026-08-20T17:01:07.160994+10:00'` (upper bound) | **0** |
+| both bounds, whole seconds | 3302 |
+
+`datetime.now()` always carries microseconds, so an unguarded
+`isoformat()` makes every incremental slice return nothing — silent total data
+loss, no error. Bounds are therefore truncated with
+`.replace(microsecond=0)` before rendering, and a unit test asserts no `.`
+appears in the rendered query.
+
+F3 and F12 together are why the smoke check asserts `0 < windowed < full`
+rather than just `windowed < full`: the two failure modes push the row count in
+opposite directions and each looks like a healthy sync from the outside.
+
+### F13 — Pre-existing: the Data Query literal used a zone name, not an offset
+
+Unrelated to AQuA and present since before this work. `_to_datetime_str` used
+`%Z`, which renders an abbreviation for a named zone:
+
+```
+%Z -> '2026-07-21 17:04:42.026038 AEST'   rejected: "is not a valid timestamp literal"
+%z -> '2026-07-21 17:04:42.026038 +1000'  accepted
+```
+
+Every incremental Data Query slice failed on any tenant whose local zone is not
+UTC — including the APAC sandbox used here. Fixed as part of this work since the
+function moved into the backend. It fails loudly rather than returning wrong
+data, so there is no historical data-correctness concern, only failed syncs.
+
+With both fixed, the two backends independently agree: the same 30-day window
+returns 3302 of 3308 accounts through Data Query and through AQuA.
+
 ### F11 — Relationship-derived column names can collide with own fields
 
 For 28 object/relationship pairs, `lower(relationship) + "id"` is already an
@@ -378,7 +417,8 @@ strictly fewer rows than the first.
 
 | Risk | Mitigation |
 |---|---|
-| Silent full-table reads from a malformed literal (F3) | Pinned renderer, unit test on the exact predicate, second-sync row-count check |
+| Silent full-table reads from a malformed literal (F3) | Pinned renderer, unit test on the exact predicate, smoke check asserting a strict subset |
+| Silent empty reads from fractional seconds (F12) | Microseconds truncated in the renderer; unit test asserts no `.` in the query; smoke check asserts a non-zero row count |
 | AQuA is a legacy API and may be deprecated | Data Query stays the default; the flag is additive and removable |
 | CSV loses the null/empty-string distinction (F7) | Accepted: empty strings become `None`; documented as a behavioural difference from Data Query |
 | Users flip the flag expecting a transparent swap (F9) | Spec description and README both state it needs a fresh sync |
