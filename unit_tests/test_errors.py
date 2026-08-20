@@ -50,3 +50,20 @@ def test_transient_and_config_errors():
     assert ZuoraTransientError("net").failure_type == FailureType.transient_error
     assert ZuoraConfigError("bad creds").failure_type == FailureType.config_error
     assert ZuoraTransientError("net").message == "net"
+
+
+from source_zuora.zuora_errors import is_transient_job_error
+
+
+def test_is_transient_job_error_matches_known_markers():
+    assert is_transient_job_error("Internal message: Service Temporarily Unavailable LINK_30000007")
+    assert is_transient_job_error("SERVICE UNAVAILABLE")
+    assert is_transient_job_error("Please try again later")
+    assert is_transient_job_error("Internal Server Error")
+
+
+def test_is_transient_job_error_rejects_permanent_failures():
+    assert not is_transient_job_error("There is a syntax error in one of the queries")
+    assert not is_transient_job_error("You must specify a select.")
+    assert not is_transient_job_error("")
+    assert not is_transient_job_error(None)

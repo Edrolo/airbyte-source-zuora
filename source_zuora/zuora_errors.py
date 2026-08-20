@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Airbyte, Inc., all rights reserved.
 #
 
-from typing import Any
+from typing import Any, Optional
 
 from airbyte_cdk.models import FailureType
 from airbyte_cdk.utils import AirbyteTracedException
@@ -70,3 +70,20 @@ class ZuoraConfigError(AirbyteTracedException):
         super().__init__(
             message=message, internal_message=message, failure_type=FailureType.config_error
         )
+
+
+# Substrings in a terminal job's error message that indicate a transient Zuora-side
+# outage (the whole job should be retried) rather than a permanent query/config error.
+# e.g. "Internal message: Service Temporarily Unavailable ... LINK_30000007".
+TRANSIENT_JOB_MARKERS = (
+    "temporarily unavailable",
+    "service unavailable",
+    "try again",
+    "internal server error",
+)
+
+
+def is_transient_job_error(message: Optional[str]) -> bool:
+    """True if a terminal job's message names a transient Zuora-side outage."""
+    lowered = (message or "").lower()
+    return any(marker in lowered for marker in TRANSIENT_JOB_MARKERS)

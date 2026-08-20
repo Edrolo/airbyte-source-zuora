@@ -14,7 +14,7 @@ from airbyte_cdk.sources.streams import CheckpointMixin, Stream
 from airbyte_cdk.utils import AirbyteTracedException
 
 from .zuora_auth import ZuoraAuthenticator
-from .zuora_client import ZuoraQueryClient
+from .zuora_backend import QueryBackend, get_backend
 from .zuora_errors import (
     QueryWindowError,
     ZOQLQueryCannotProcessObject,
@@ -40,7 +40,7 @@ class ZuoraObjectStream(Stream, CheckpointMixin):
 
     primary_key = "id"
 
-    def __init__(self, name: str, client: ZuoraQueryClient, config: Mapping[str, Any]):
+    def __init__(self, name: str, client: QueryBackend, config: Mapping[str, Any]):
         self._name = name
         self._client = client
         self._config = config
@@ -84,11 +84,6 @@ class ZuoraObjectStream(Stream, CheckpointMixin):
     def get_json_schema(self) -> Mapping[str, Any]:
         return {"type": "object", "properties": dict(self._client.describe_object(self.name))}
 
-    @staticmethod
-    def _to_datetime_str(date: datetime) -> str:
-        # e.g. '2021-07-15 07:45:55.000000 -07:00' — format Zuora accepts as TIMESTAMP
-        return date.strftime("%Y-%m-%d %H:%M:%S.%f %Z")
-
     def stream_slices(
         self, *, sync_mode=SyncMode.full_refresh, cursor_field=None, stream_state=None
     ) -> Iterable[Optional[Mapping[str, Any]]]:
@@ -107,22 +102,8 @@ class ZuoraObjectStream(Stream, CheckpointMixin):
         start_date = min(start_date, end_date)
         while start_date <= end_date:
             end_slice = start_date.add(days=self.window_in_days)
-            yield {
-                "start_date": self._to_datetime_str(start_date),
-                "end_date": self._to_datetime_str(end_slice),
-            }
+            yield {"start_date": start_date, "end_date": end_slice}
             start_date = end_slice
-
-    def _query_incremental(self, cursor: str, stream_slice: Mapping[str, Any]) -> str:
-        return (
-            f"select * from {self.name} where "
-            f"{cursor} >= TIMESTAMP '{stream_slice.get('start_date')}' and "
-            f"{cursor} <= TIMESTAMP '{stream_slice.get('end_date')}' "
-            f"order by {cursor} asc"
-        )
-
-    def _query_full(self) -> str:
-        return f"select * from {self.name}"
 
     def read_records(
         self,
@@ -131,13 +112,18 @@ class ZuoraObjectStream(Stream, CheckpointMixin):
         stream_slice: Optional[Mapping[str, Any]] = None,
         stream_state: Optional[Mapping[str, Any]] = None,
     ) -> Iterable[Mapping[str, Any]]:
-        cursor = self.cursor_field
+        cursor = self.cursor_field or None
         try:
             if cursor and stream_slice:
-                query = self._query_incremental(cursor, stream_slice)
+                records = self._client.read_object(
+                    self.name,
+                    cursor=cursor,
+                    start=stream_slice.get("start_date"),
+                    end=stream_slice.get("end_date"),
+                )
             else:
-                query = self._query_full()
-            for record in self._client.run_query(query):
+                records = self._client.read_object(self.name)
+            for record in records:
                 if cursor:
                     incoming = record.get(cursor)
                     if incoming:
@@ -150,7 +136,7 @@ class ZuoraObjectStream(Stream, CheckpointMixin):
             if "cannot be resolved" not in (error.message or ""):
                 raise
             # schema advertised a cursor the query engine rejected — fetch full object
-            yield from self._client.run_query(self._query_full())
+            yield from self._client.read_object(self.name)
 
 
 class SourceZuora(AbstractSource):
@@ -164,11 +150,7 @@ class SourceZuora(AbstractSource):
                 f"Choose a valid endpoint from the connector spec."
             )
         try:
-            client = ZuoraQueryClient(
-                url_base=auth.url_base,
-                authenticator=auth.get_auth(),
-                data_query=config.get("data_query", "Live"),
-            )
+            client = get_backend(config, auth.get_auth(), auth.url_base)
             objects = client.list_objects()
         except AirbyteTracedException as error:
             return False, error.message
@@ -188,15 +170,14 @@ class SourceZuora(AbstractSource):
         streams = self.streams(config)
         if streams:
             streams[0]._client.warm_describe_cache([stream.name for stream in streams])
-        return AirbyteCatalog(streams=[stream.as_airbyte_stream() for stream in streams])
+        # An object with no queryable fields (AQuA: none carrying the `export`
+        # context) cannot be selected from, so it is not advertised as a stream.
+        queryable = [s for s in streams if s.get_json_schema().get("properties")]
+        return AirbyteCatalog(streams=[stream.as_airbyte_stream() for stream in queryable])
 
     def streams(self, config: Mapping[str, Any]) -> List[Stream]:
         auth = ZuoraAuthenticator(config)
-        client = ZuoraQueryClient(
-            url_base=auth.url_base,
-            authenticator=auth.get_auth(),
-            data_query=config.get("data_query", "Live"),
-        )
+        client = get_backend(config, auth.get_auth(), auth.url_base)
         return [
             ZuoraObjectStream(name, client, config)
             for name in client.list_objects()
