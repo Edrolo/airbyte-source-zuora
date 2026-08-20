@@ -55,9 +55,14 @@ def render_query(
     fields, plus `<Relationship>.Id` for each usable relationship, since `select *`
     alone returns no foreign keys.
 
-    Bounds are rendered with `datetime.isoformat()`. A space-separated literal is
-    accepted by Zuora but silently drops the predicate and returns the whole table,
-    so this format is not optional.
+    Bounds are rendered as whole-second ISO-8601 with an explicit offset. Both
+    details matter and both fail silently:
+
+    - a space-separated literal (`'2026-08-01 00:00:00'`) makes Zuora drop the
+      predicate and return the entire table;
+    - fractional seconds on the upper bound (`'...T17:01:07.160994+10:00'`) make it
+      match zero rows. `datetime.now()` always carries microseconds, so truncating
+      is not cosmetic — without it every incremental sync returns nothing.
     """
     columns = ", ".join(["*"] + [f"{relationship}.Id" for relationship in foreign_keys])
     query = f"select {columns} from {obj}"
@@ -65,10 +70,15 @@ def render_query(
         return query
     return (
         f"{query} where "
-        f"{cursor} >= '{start.isoformat()}' and "
-        f"{cursor} <= '{end.isoformat()}' "
+        f"{cursor} >= '{_to_literal(start)}' and "
+        f"{cursor} <= '{_to_literal(end)}' "
         f"order by {cursor} asc"
     )
+
+
+def _to_literal(moment: datetime) -> str:
+    """Whole-second ISO-8601 with offset — see render_query for why the truncation matters."""
+    return moment.replace(microsecond=0).isoformat()
 
 
 def _coerce(value: str, json_schema_type: List[str]) -> Any:

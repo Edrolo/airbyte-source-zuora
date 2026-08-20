@@ -318,3 +318,19 @@ def test_aborted_permanently_raises(requests_mock):
     )
     with pytest.raises(ZOQLQueryFailed, match="could not be found"):
         list(make_aqua().read_object("account"))
+
+
+def test_render_query_truncates_microseconds():
+    # Zuora silently matches ZERO rows when the upper bound carries fractional
+    # seconds, and datetime.now() always has microseconds. Verified against a
+    # sandbox: `<= '...T17:01:07.160994+10:00'` returned 0 of 3308 rows.
+    start = pendulum.datetime(2026, 4, 22, 17, 1, 7, 160968, tz="Australia/Melbourne")
+    end = pendulum.datetime(2026, 8, 20, 17, 1, 7, 160994, tz="Australia/Melbourne")
+    query = render_query("Account", [], cursor="UpdatedDate", start=start, end=end)
+    assert "." not in query
+    assert query == (
+        "select * from Account "
+        "where UpdatedDate >= '2026-04-22T17:01:07+10:00' "
+        "and UpdatedDate <= '2026-08-20T17:01:07+10:00' "
+        "order by UpdatedDate asc"
+    )
