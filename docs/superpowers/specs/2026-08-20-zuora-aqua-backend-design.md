@@ -94,7 +94,8 @@ The backend must inspect the submit **body**, not just its status code.
 
 `select * from Account` returned 57 columns; Account has exactly 57 fields
 whose `<contexts>` includes `export`. Discovered schemas and emitted records
-agree, so `select *` is safe and no field enumeration is needed.
+agree for an object's *own* fields — but see F10: `select *` omits foreign
+keys entirely.
 
 `<contexts>` filtering is required: of 2,614 total fields across all
 objects, 2,428 carry `export` and 186 do not. Selecting a non-export field
@@ -146,8 +147,71 @@ Only in Data Query: `orders`, `user`, `attachment`, `chargemetrics`,
 Only in AQuA: `order`, `export`, `import`, `invoiceadjustment`,
 `invoicesplit`, `journalentrydetail*`, `emailhistory`, …
 
-Even the same concept is renamed (`orders` -> `order`). Lowercase
-normalization does not make the flag transparent.
+`orders` -> `order` is the **only** naming variant between the two lists —
+checked by comparing singular/plural forms and near-matches across all 135
+non-shared names. The remaining 102 Data-Query-only and 33 AQuA-only objects
+are genuinely absent from the other backend, so lowercase normalization does
+not make the flag transparent.
+
+The `orders` / `order` pair is also not a clean equivalence: AQuA's `Order`
+has 24 export fields, all present in Data Query's 26-field `orders`, missing
+`accountid` and `invoicescheduleid` (see F10).
+
+### F10 — `select *` omits every foreign key; `<related-objects>` recovers most
+
+This is the most consequential finding. Across 12 sampled core objects,
+comparing Data Query's field set to AQuA's own export-context fields:
+
+| Object | Data Query | AQuA `select *` | AQuA + related | FK cols missing | recovered |
+|---|---|---|---|---|---|
+| Account | 66 | 57 | — | 7 | 0 |
+| Subscription | 67 | 54 | — | 12 | 6 |
+| Invoice | 67 | 46 | — | 15 | 11 |
+| InvoiceItem | 76 | 36 | — | 29 | 23 |
+| RatePlan | 20 | 16 | — | 5 | 4 |
+| RatePlanCharge | 118 | 101 | — | 12 | 9 |
+| Payment | 49 | 46 | — | 5 | 3 |
+| CreditMemo | 62 | 40 | — | 10 | 7 |
+| ProductRatePlan | 16 | 15 | 16 | 1 | 1 |
+| RefundInvoicePayment | 11 | 6 | 23 | 5 | 5 |
+
+`InvoiceItem` drops from 76 fields to 36, and `Subscription` loses
+`accountid` — the relational structure of the data would be gone.
+
+In Export ZOQL, foreign keys are not plain columns; they are reached through
+the relationship. The per-object describe XML carries a `<related-objects>`
+section listing relationship names (1,001 relationships across the 119
+objects; `InvoiceItem` has 37). Selecting through them works:
+
+```sql
+select *, Account.Id, BillToContact.Id, ShipToContact.Id from Subscription
+```
+
+returns 57 columns — the 54 own fields plus `Account.Id`,
+`BillToContact.Id`, `ShipToContact.Id`. Crucially the header name maps
+straight onto Data Query's: `Account.Id` -> `accountid`,
+`BillToContact.Id` -> `billtocontactid`.
+
+**Recovery rate: 66 of 98 missing FK columns (67%).** The 32 that remain
+have no corresponding relationship and are unavailable in Export ZOQL at
+all — mostly newer eInvoicing/eReporting fields
+(`arereportingrequestid`, `einvoicebusinessstatusupdateid`), contact
+snapshots (`billtocontactsnapshotid`), and `organizationid`.
+
+An unknown relationship name is a submit-time error
+(`"The requested data source could not be found"`), so relationship names
+must come from the describe XML and never be guessed.
+
+### F11 — Relationship-derived column names can collide with own fields
+
+For 28 object/relationship pairs, `lower(relationship) + "id"` is already an
+own export field — e.g. `InvoiceItem` has its own `subscriptionid` *and* a
+`Subscription` relationship. Adding `Subscription.Id` would emit a duplicate
+column.
+
+No object has a relationship named after itself, so the prefix in the CSV
+header (queried object name for own fields, relationship name for related
+ones) is never ambiguous.
 
 ## Decisions
 
@@ -157,6 +221,7 @@ normalization does not make the flag transparent.
 | D2 | Stateless AQuA (`version: "1.0"`), reusing the existing date-window slicing | State stays in Airbyte where it can be inspected and reset; AQuA stateful mode puts it in Zuora, where a failed sync can double-advance and resets need Zuora-side intervention |
 | D3 | Each backend advertises its **native** object set | Honest about F9; intersecting to 85 would drop 103 streams that work today |
 | D4 | Switching `query_api` on an existing connection is a documented breaking change | F9 plus the incompatible cursor datetime format (F7) mean state and downstream tables do not carry over |
+| D6 | Query `select *` **plus** `<Rel>.Id` for every related object whose derived name is not already an own field | F10: `select *` alone loses foreign keys and would strip the data of its relational structure. The guard implements F11 |
 | D5 | Skip objects with zero export-context fields at discovery | A general rule that covers `BillingPreviewRun` (F4) without hardcoding a name. `list_objects` returns the full set; the filter applies in `streams()` after schemas are warmed, since the export-field count is only known post-describe |
 
 ## Architecture
@@ -203,14 +268,20 @@ The repo uses a flat `source_zuora/` layout; keep it.
 | Poll | `GET /v1/batch-query/jobs/{id}` -> `status`; on `completed` take `batches[0].fileId` |
 | Download | `GET /v1/file/{fileId}`, streamed |
 
-Query rendering:
+Query rendering — `select *` for own fields, plus one `<Rel>.Id` per related
+object, skipping any whose derived column name is already an own field (F11):
 
 ```sql
-select * from Account
+select *, Account.Id, BillToContact.Id, ShipToContact.Id from Subscription
 where UpdatedDate >= '2026-08-01T00:00:00+10:00'
   and UpdatedDate <= '2026-08-20T00:00:00+10:00'
 order by UpdatedDate asc
 ```
+
+Relationship names come from the `<related-objects>` section of the object's
+describe XML and are never guessed — an unknown name is a submit-time error
+(F10). The discovered schema must include the related columns too, so
+`describe_object` returns own export fields plus the same derived FK names.
 
 ### CSV streaming
 
@@ -232,11 +303,20 @@ the file request. The unit test for the embedded-newline case pins this.
 
 Per row, in order:
 
-1. Strip the `Object.` column prefix and lowercase the key
-   (`Account.AccountType__c` -> `accounttype__c`).
+1. Resolve the column name from its `Prefix.Field` header:
+   - prefix **equals the queried object** -> own field; drop the prefix and
+     lowercase (`Subscription.AccountNumber` -> `accountnumber`,
+     `Account.AccountType__c` -> `accounttype__c`).
+   - prefix is **a relationship name** -> foreign key; concatenate both parts
+     lowercased (`Account.Id` -> `accountid`,
+     `BillToContact.Id` -> `billtocontactid`), matching Data Query's naming.
+
+   No object has a self-named relationship (F11), so the two cases never
+   overlap.
 2. Map `""` -> `None` (F7).
 3. Coerce to the Describe-derived type: `decimal`/`number`/`integer` ->
    numeric, `boolean` -> bool, everything else passthrough as string.
+   Related `*.Id` columns are always string.
 
 Datetimes stay strings, matching the Data Query backend and keeping the
 cursor comparison in `source.py` unchanged.
@@ -281,6 +361,11 @@ Unit tests with a stubbed session, mirroring `unit_tests/test_client.py`:
 - **Job lifecycle**: submit-body error detection (F4), `aborted` -> transient
   vs cannot-process classification, job-level retry on transient abort.
 - **Discovery**: objects with zero export fields are skipped (D5).
+- **Related-object handling** (F10/F11): the rendered select list includes
+  `<Rel>.Id` for each related object; a relationship whose derived name
+  duplicates an own field is omitted; `Account.Id` normalizes to `accountid`
+  while `Subscription.Id` on a Subscription query normalizes to `id`; the
+  discovered schema contains the derived FK names.
 - **Factory**: `get_backend` selects on `query_api`, defaulting to Data Query
   when the key is absent.
 
@@ -297,4 +382,5 @@ strictly fewer rows than the first.
 | AQuA is a legacy API and may be deprecated | Data Query stays the default; the flag is additive and removable |
 | CSV loses the null/empty-string distinction (F7) | Accepted: empty strings become `None`; documented as a behavioural difference from Data Query |
 | Users flip the flag expecting a transparent swap (F9) | Spec description and README both state it needs a fresh sync |
+| 32 FK columns per the sampled 12 objects are unavailable in Export ZOQL at all (F10) | Accepted and documented; affects mostly eInvoicing/eReporting and contact-snapshot FKs. Quantify across all 119 objects during implementation |
 | Concurrent AQuA export limits on large tenants | Reuse the bounded `describe_concurrency` pool pattern already in `warm_describe_cache` |
