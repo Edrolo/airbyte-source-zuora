@@ -12,9 +12,9 @@ import requests
 from .zuora_errors import (
     ZOQLQueryCannotProcessObject,
     ZOQLQueryFailed,
-    ZuoraConfigError,
     ZuoraTransientError,
 )
+from .zuora_http import ZuoraHttpClient
 from .zuora_types import json_type
 
 _ERROR_STATUSES = {"failed", "canceled", "aborted"}
@@ -34,14 +34,6 @@ _TRANSIENT_JOB_MARKERS = (
 def _is_transient_job_error(message: str) -> bool:
     lowered = message.lower()
     return any(marker in lowered for marker in _TRANSIENT_JOB_MARKERS)
-
-_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
-_RETRYABLE_EXCEPTIONS = (
-    requests.exceptions.ConnectionError,
-    requests.exceptions.Timeout,
-    requests.exceptions.ChunkedEncodingError,
-)
-
 
 class ZuoraQueryClient:
     """
@@ -68,17 +60,21 @@ class ZuoraQueryClient:
         self._auth = authenticator
         self._data_query = data_query
         self._poll_interval = poll_interval
-        self._session = session or requests.Session()
         self._max_poll_attempts = max_poll_attempts
-        self._request_timeout = request_timeout
-        self._max_retries = max_retries
         self._max_job_retries = max_job_retries
-        self._backoff_factor = backoff_factor
         self._describe_concurrency = describe_concurrency
+        self._http = ZuoraHttpClient(
+            url_base=url_base,
+            authenticator=authenticator,
+            session=session,
+            request_timeout=request_timeout,
+            max_retries=max_retries,
+            backoff_factor=backoff_factor,
+        )
         self._describe_cache: dict = {}
 
     def _headers(self) -> Mapping[str, str]:
-        return {**self._auth.get_auth_header(), "Content-Type": "application/json"}
+        return self._http.headers()
 
     def _base_params(self) -> MutableMapping[str, Any]:
         params: MutableMapping[str, Any] = {
@@ -90,46 +86,11 @@ class ZuoraQueryClient:
             params["sourceData"] = "DATAHUB"
         return params
 
-    def _sleep_before_retry(self, attempt: int, response: Optional[requests.Response]) -> None:
-        delay = self._backoff_factor * (2**attempt)
-        if response is not None:
-            retry_after = response.headers.get("Retry-After")
-            if retry_after:
-                try:
-                    delay = float(retry_after)
-                except ValueError:
-                    pass
-        if delay > 0:
-            time.sleep(delay)
+    def _sleep_before_retry(self, attempt: int, response=None) -> None:
+        self._http.sleep_before_retry(attempt, response)
 
     def _request(self, method: str, url: str, **kwargs) -> requests.Response:
-        kwargs.setdefault("timeout", self._request_timeout)
-        for attempt in range(self._max_retries + 1):
-            try:
-                response = self._session.request(method, url, **kwargs)
-            except _RETRYABLE_EXCEPTIONS as exc:
-                if attempt >= self._max_retries:
-                    raise ZuoraTransientError(
-                        f"Request {method} {url} failed after {self._max_retries} retries: {exc}"
-                    )
-                self._sleep_before_retry(attempt, None)
-                continue
-            if response.status_code in _RETRYABLE_STATUS:
-                if attempt >= self._max_retries:
-                    raise ZuoraTransientError(
-                        f"Request {method} {url} failed with HTTP {response.status_code} "
-                        f"after {self._max_retries} retries"
-                    )
-                self._sleep_before_retry(attempt, response)
-                continue
-            if response.status_code in (401, 403):
-                raise ZuoraConfigError(
-                    f"Zuora returned HTTP {response.status_code} for {url} — "
-                    f"check your client credentials and API user permissions."
-                )
-            response.raise_for_status()
-            return response
-        raise ZuoraTransientError(f"Request {method} {url} exhausted retries")  # defensive
+        return self._http.request(method, url, **kwargs)
 
     def submit_job(self, zoql: str) -> str:
         params = self._base_params()
