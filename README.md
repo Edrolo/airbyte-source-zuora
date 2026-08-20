@@ -75,9 +75,6 @@ object's `<related-objects>` metadata, which recovers about two-thirds of them
 unavailable in Export ZOQL at all — mostly eInvoicing/eReporting fields, contact
 snapshots, and `organizationid`.
 
-Design notes and the sandbox-verified API findings behind these numbers are in
-[`docs/superpowers/specs/2026-08-20-zuora-aqua-backend-design.md`](docs/superpowers/specs/2026-08-20-zuora-aqua-backend-design.md).
-
 ## Local development
 
 Requires [Poetry](https://python-poetry.org/) and **Python 3.10–3.13** (airbyte-cdk does not

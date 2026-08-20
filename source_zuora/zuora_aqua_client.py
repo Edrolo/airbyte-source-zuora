@@ -5,9 +5,18 @@
 """
 AQuA (Aggregate Query API) backend: Export ZOQL over `POST /v1/batch-query/`.
 
-Differs from the Data Query backend in every layer — XML schema discovery, CSV
-output, its own datetime literal, and foreign keys reached through relationships
-rather than columns. See docs/superpowers/specs/2026-08-20-zuora-aqua-backend-design.md.
+Differs from the Data Query backend in every layer: schemas are discovered over the
+XML Describe API rather than `DESCRIBE` jobs, output is CSV rather than JSONL, the
+datetime literal has its own format, and foreign keys are reached through
+relationships rather than being plain columns.
+
+Two behaviours are worth knowing before changing anything here, because both fail
+silently rather than raising (see `render_query` and `foreign_key_columns`):
+
+- a malformed or over-precise datetime bound does not error — it either drops the
+  predicate and returns the whole table, or matches nothing at all;
+- `select *` returns an object's own fields only, so foreign keys must be selected
+  explicitly through `<Relationship>.Id`.
 """
 
 import csv
