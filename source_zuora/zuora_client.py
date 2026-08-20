@@ -15,39 +15,7 @@ from .zuora_errors import (
     ZuoraConfigError,
     ZuoraTransientError,
 )
-
-TYPE_NUMBER = ["number", "null"]
-TYPE_STRING = ["string", "null"]
-TYPE_OBJECT = ["object", "null"]
-TYPE_ARRAY = ["array", "null"]
-TYPE_BOOL = ["boolean", "null"]
-
-TYPE_MAPPING = {
-    "decimal(22,9)": TYPE_NUMBER,
-    "decimal": TYPE_NUMBER,
-    "integer": TYPE_NUMBER,
-    "int": TYPE_NUMBER,
-    "bigint": TYPE_NUMBER,
-    "smallint": TYPE_NUMBER,
-    "double": TYPE_NUMBER,
-    "float": TYPE_NUMBER,
-    "timestamp": TYPE_NUMBER,
-    "date": TYPE_STRING,
-    "datetime": TYPE_STRING,
-    "timestamp with time zone": TYPE_STRING,
-    "picklist": TYPE_STRING,
-    "text": TYPE_STRING,
-    "varchar": TYPE_STRING,
-    "zoql": TYPE_OBJECT,
-    "binary": TYPE_OBJECT,
-    "json": TYPE_OBJECT,
-    "xml": TYPE_OBJECT,
-    "blob": TYPE_OBJECT,
-    "list": TYPE_ARRAY,
-    "array": TYPE_ARRAY,
-    "boolean": TYPE_BOOL,
-    "bool": TYPE_BOOL,
-}
+from .zuora_types import json_type
 
 _ERROR_STATUSES = {"failed", "canceled", "aborted"}
 _PROCESS_OBJECT_ERROR = "process object"
@@ -224,7 +192,7 @@ class ZuoraQueryClient:
         if name in self._describe_cache:
             return self._describe_cache[name]
         result = {
-            row["Column"]: {"type": TYPE_MAPPING.get(row.get("Type"), TYPE_STRING)}
+            row["Column"]: {"type": json_type(row.get("Type"))}
             for row in self.run_query(f"DESCRIBE {name}")
         }
         self._describe_cache[name] = result
