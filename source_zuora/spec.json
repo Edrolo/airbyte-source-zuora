@@ -22,7 +22,16 @@
         "type": "string",
         "title": "Query Window (in days)",
         "description": "The amount of days for each data-chunk begining from start_date. Bigger the value - faster the fetch. (0.1 - as for couple of hours, 1 - as for a Day; 364 - as for a Year).",
-        "examples": ["0.5", "1", "30", "60", "90", "120", "200", "364"],
+        "examples": [
+          "0.5",
+          "1",
+          "30",
+          "60",
+          "90",
+          "120",
+          "200",
+          "364"
+        ],
         "pattern": "^(0|[1-9]\\d*)(\\.\\d+)?$",
         "default": "90"
       },
@@ -44,11 +53,24 @@
           "APAC Central Sandbox"
         ]
       },
+      "query_api": {
+        "title": "Query API",
+        "type": "string",
+        "description": "Which Zuora API to extract with. `Data Query` (default) uses ZOQL Data Query jobs. `AQuA` uses the Aggregate Query API with Export ZOQL, which exposes a different, smaller set of objects \u2014 switching this on an existing connection requires a fresh sync.",
+        "enum": [
+          "Data Query",
+          "AQuA"
+        ],
+        "default": "Data Query"
+      },
       "data_query": {
         "title": "Data Query Type",
         "type": "string",
-        "description": "Choose between `Live`, or `Unlimited` - the optimized, replicated database at 12 hours freshness for high volume extraction <a href=\"https://knowledgecenter.zuora.com/Central_Platform/Query/Data_Query/A_Overview_of_Data_Query#Query_Processing_Limitations\">Link</a>",
-        "enum": ["Live", "Unlimited"],
+        "description": "Applies to the `Data Query` API only. Choose between `Live`, or `Unlimited` - the optimized, replicated database at 12 hours freshness for high volume extraction <a href=\"https://knowledgecenter.zuora.com/Central_Platform/Query/Data_Query/A_Overview_of_Data_Query#Query_Processing_Limitations\">Link</a>",
+        "enum": [
+          "Live",
+          "Unlimited"
+        ],
         "default": "Live"
       },
       "client_id": {

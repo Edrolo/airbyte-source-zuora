@@ -37,10 +37,46 @@ Config conforms to [`source_zuora/spec.json`](source_zuora/spec.json):
 |---|---|---|
 | `start_date` | yes | Replication start date, `YYYY-MM-DD`. |
 | `tenant_endpoint` | yes | Your Zuora tenant location (e.g. `US Production`, `EU Production`, `US API Sandbox`, …). See the spec for the full enum. |
-| `data_query` | yes | `Live` (default) or `Unlimited` (the replicated Data Query store, ~12h freshness, for high-volume extraction). |
+| `query_api` | no | `Data Query` (default) or `AQuA`. Selects the extraction API — see [Choosing the query API](#choosing-the-query-api). |
+| `data_query` | yes | `Live` (default) or `Unlimited` (the replicated Data Query store, ~12h freshness, for high-volume extraction). Applies to the `Data Query` API only. |
 | `client_id` | yes | OAuth client ID (secret). |
 | `client_secret` | yes | OAuth client secret (secret). |
 | `window_in_days` | no | Size of each incremental date slice (default `90`). Larger = fewer, bigger jobs. |
+
+## Choosing the query API
+
+`query_api` selects which Zuora API the connector extracts with. **`Data Query` is the
+default and unchanged** — set `query_api` only if you specifically want AQuA.
+
+| | `Data Query` | `AQuA` |
+|---|---|---|
+| API | `POST /query/jobs` (ZOQL) | `POST /v1/batch-query/` (Export ZOQL) |
+| Schema discovery | `SHOW TABLES` / `DESCRIBE` | `GET /v1/describe` (XML) |
+| Download | JSONL | CSV |
+| Objects (APAC sandbox) | 188 | 119 |
+
+**Switching `query_api` on an existing connection is a breaking change.** Create a new
+connection and re-sync instead. Two reasons:
+
+1. **The object sets differ.** Of 188 Data Query objects and 119 AQuA objects, only 85
+   exist in both. 103 streams you have today are unavailable in AQuA (`orders`, `user`,
+   `attachment`, `chargemetrics`, the `audit*` and `extended*` families, …) and 34 are
+   AQuA-only (`order`, `invoiceadjustment`, `invoicesplit`, the `journalentrydetail*`
+   family, …). Note `orders` is renamed to `order`.
+2. **Cursor values are formatted differently**, so existing incremental state does not
+   carry over.
+
+**Foreign keys under AQuA.** Export ZOQL does not expose foreign keys as columns, so a
+plain `select *` returns none of them — `InvoiceItem` would drop from 76 fields to 36.
+The connector reconstructs them by selecting `<Relationship>.Id` for each entry in the
+object's `<related-objects>` metadata, which recovers about two-thirds of them
+(66 of 98 across 12 sampled core objects) under their Data Query names (`accountid`,
+`billtocontactid`, …). The remaining third has no corresponding relationship and is
+unavailable in Export ZOQL at all — mostly eInvoicing/eReporting fields, contact
+snapshots, and `organizationid`.
+
+Design notes and the sandbox-verified API findings behind these numbers are in
+[`docs/superpowers/specs/2026-08-20-zuora-aqua-backend-design.md`](docs/superpowers/specs/2026-08-20-zuora-aqua-backend-design.md).
 
 ## Local development
 
@@ -158,7 +194,12 @@ docker push ghcr.io/edrolo/airbyte-source-zuora:0.2.0
 | File | Responsibility |
 |---|---|
 | `source_zuora/source.py` | `SourceZuora(AbstractSource)` + `ZuoraObjectStream(Stream, CheckpointMixin)` — discovery, per-stream state, slicing, cursor resolution/fallback. |
-| `source_zuora/zuora_client.py` | `ZuoraQueryClient` — ZOQL submit/poll/download, `list_objects`, `describe_object`, retries/backoff/timeouts. |
+| `source_zuora/zuora_backend.py` | `QueryBackend` interface + `get_backend()` factory selecting on `query_api`. |
+| `source_zuora/zuora_client.py` | `ZuoraQueryClient` — the Data Query backend: ZOQL submit/poll/download. |
+| `source_zuora/zuora_aqua_client.py` | `ZuoraAquaClient` — the AQuA backend: Export ZOQL batch-query submit/poll/CSV download, FK reconstruction. |
+| `source_zuora/zuora_describe.py` | Parsers for the XML Describe API (objects, export-context fields, relationships). |
+| `source_zuora/zuora_http.py` | `ZuoraHttpClient` — shared retries/backoff/timeouts and auth-failure classification. |
+| `source_zuora/zuora_types.py` | Zuora-type → JSON-schema-type mapping, shared by both backends. |
 | `source_zuora/zuora_auth.py` | OAuth2 `client_credentials` authenticator. |
 | `source_zuora/zuora_endpoint.py` | Tenant-endpoint → API base-URL mapping. |
 | `source_zuora/zuora_errors.py` | `AirbyteTracedException`-based error taxonomy (config / transient / system). |
@@ -169,8 +210,10 @@ docker push ghcr.io/edrolo/airbyte-source-zuora:0.2.0
 - **Python 3.14 is not supported** until airbyte-cdk supports it.
 - `check` / `discover` / `read` cannot be verified without a live Zuora tenant.
 - Minor deferred items: date-window boundaries overlap by one edge (deduplicated by primary key);
-  the `requests.Session` is not explicitly closed; `TYPE_MAPPING` assumes lowercase,
-  unparameterized Zuora column types.
+  the `requests.Session` is not explicitly closed.
+- Under `AQuA`, roughly a third of foreign keys cannot be recovered (see
+  [Choosing the query API](#choosing-the-query-api)), and AQuA exposes fewer objects than
+  Data Query.
 
 ## Maintainers
 
