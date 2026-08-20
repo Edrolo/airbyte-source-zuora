@@ -157,7 +157,7 @@ normalization does not make the flag transparent.
 | D2 | Stateless AQuA (`version: "1.0"`), reusing the existing date-window slicing | State stays in Airbyte where it can be inspected and reset; AQuA stateful mode puts it in Zuora, where a failed sync can double-advance and resets need Zuora-side intervention |
 | D3 | Each backend advertises its **native** object set | Honest about F9; intersecting to 85 would drop 103 streams that work today |
 | D4 | Switching `query_api` on an existing connection is a documented breaking change | F9 plus the incompatible cursor datetime format (F7) mean state and downstream tables do not carry over |
-| D5 | Skip objects with zero export-context fields at discovery | A general rule that covers `BillingPreviewRun` (F4) without hardcoding a name |
+| D5 | Skip objects with zero export-context fields at discovery | A general rule that covers `BillingPreviewRun` (F4) without hardcoding a name. `list_objects` returns the full set; the filter applies in `streams()` after schemas are warmed, since the export-field count is only known post-describe |
 
 ## Architecture
 
@@ -185,7 +185,7 @@ The repo uses a flat `source_zuora/` layout; keep it.
 
 | File | Change |
 |---|---|
-| `zuora_http.py` | **New.** `_request` retry loop and `_sleep_before_retry` extracted verbatim from `zuora_client.py:127-160`; both backends need identical behaviour |
+| `zuora_http.py` | **New.** `_request` retry loop and `_sleep_before_retry` extracted verbatim from `zuora_client.py:125-164`; both backends need identical behaviour |
 | `zuora_backend.py` | **New.** `QueryBackend` ABC and `get_backend(config)` factory |
 | `zuora_describe.py` | **New.** Pure functions parsing `/v1/describe` and `/v1/describe/{object}` XML — no HTTP, so directly unit-testable against captured fixtures |
 | `zuora_aqua_client.py` | **New.** `ZuoraAquaClient(QueryBackend)` |
@@ -223,8 +223,10 @@ quoting:
 reader = csv.DictReader(io.TextIOWrapper(response.raw, encoding="utf-8", newline=""))
 ```
 
-This streams and parses quoting correctly. `response.raw` requires
-`stream=True` and gzip decoding left to urllib3.
+This streams and parses quoting correctly. It requires `stream=True`, and
+because `response.raw` bypasses requests' content decoding, the backend either
+passes `decode_content=True` when wrapping or omits `Accept-Encoding: gzip` on
+the file request. The unit test for the embedded-newline case pins this.
 
 ### Record normalization
 
