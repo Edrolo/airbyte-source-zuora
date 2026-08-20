@@ -136,9 +136,11 @@ class ZuoraQueryClient(QueryBackend):
 
     @staticmethod
     def _to_datetime_str(date: datetime) -> str:
-        # e.g. '2021-07-15 07:45:55.000000 -07:00' — format Zuora Data Query accepts
-        # as a TIMESTAMP literal.
-        return date.strftime("%Y-%m-%d %H:%M:%S.%f %Z")
+        # e.g. '2021-07-15 07:45:55.000000 -0700' — format Zuora Data Query accepts
+        # as a TIMESTAMP literal. Must be `%z` (numeric offset), not `%Z`: for a named
+        # zone `%Z` renders an abbreviation ("AEST") and Zuora rejects the literal with
+        # "is not a valid timestamp literal", failing every incremental slice.
+        return date.strftime("%Y-%m-%d %H:%M:%S.%f %z")
 
     def render_query(
         self,

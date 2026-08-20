@@ -252,8 +252,8 @@ def test_render_query_incremental_uses_timestamp_literals():
     query = make_client().render_query("account", cursor="updateddate", start=start, end=end)
     assert query == (
         "select * from account where "
-        "updateddate >= TIMESTAMP '2026-08-01 00:00:00.000000 UTC' and "
-        "updateddate <= TIMESTAMP '2026-08-20 00:00:00.000000 UTC' "
+        "updateddate >= TIMESTAMP '2026-08-01 00:00:00.000000 +0000' and "
+        "updateddate <= TIMESTAMP '2026-08-20 00:00:00.000000 +0000' "
         "order by updateddate asc"
     )
 
@@ -266,3 +266,12 @@ def test_read_object_full_refresh(requests_mock):
     register_job(requests_mock, ["completed"])
     requests_mock.get("https://s3/result.jsonl", text='{"id": "a"}\n')
     assert list(make_client().read_object("account")) == [{"id": "a"}]
+
+
+def test_render_query_uses_numeric_offset_not_zone_abbreviation():
+    # `%Z` renders "AEST" for a named zone, which Zuora rejects outright with
+    # "is not a valid timestamp literal" — verified against an APAC sandbox.
+    start = pendulum.datetime(2026, 8, 1, tz="Australia/Melbourne")
+    query = make_client().render_query("account", cursor="updateddate", start=start, end=start)
+    assert "+1000" in query
+    assert "AEST" not in query
