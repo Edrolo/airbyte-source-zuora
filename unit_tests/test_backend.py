@@ -34,3 +34,9 @@ def test_get_backend_rejects_unknown_query_api():
 
 def test_aqua_constant_is_the_spec_enum_value():
     assert AQUA == "AQuA"
+
+
+def test_get_backend_selects_aqua():
+    from source_zuora.zuora_aqua_client import ZuoraAquaClient
+
+    assert isinstance(get_backend({"query_api": AQUA}, FakeAuth(), BASE), ZuoraAquaClient)
